@@ -1,55 +1,50 @@
 import express from "express";
-import { supabase } from "../config/supabase.js";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { allowRoles } from "../middleware/role.middleware.js";
+import { ROLES } from "../utils/roles.js";
+import {
+    getLeads,
+    getLeadById,
+    createLead,
+    updateLead,
+    deleteLead,
+    restoreLead,
+    purgeLead,
+    assignLead,
+    updateStatus,
+    requestConversion,
+    approveConversion,
+    rejectConversion,
+    approveReview,
+    rejectReview,
+} from "../controller/leadManager.controller.js";
 
 const router = express.Router();
 
-// GET ALL LEADS
-router.get("/", async (req, res) => {
-  const { data, error } = await supabase
-    .from("leads")
-    .select("*")
-    .order("created_at", { ascending: false });
+// Everything below requires a valid session.
+router.use(authMiddleware);
 
-  res.json(data);
-});
+const STAFF = [ROLES.ADMIN, ROLES.LEAD_MANAGER, ROLES.SALESMAN];
+const MANAGERS = [ROLES.ADMIN, ROLES.LEAD_MANAGER];
 
-// CREATE LEAD
-router.post("/", async (req, res) => {
-  const { data, error } = await supabase
-    .from("leads")
-    .insert(req.body)
-    .select()
-    .single();
+// Collection
+router.get("/", getLeads);
+router.post("/", allowRoles([...MANAGERS, ROLES.PARTNER]), createLead);
 
-  if (error) return res.status(400).json(error);
+// Lifecycle actions (declare BEFORE "/:id" so they aren't swallowed)
+router.post("/:id/assign", allowRoles(MANAGERS), assignLead);
+router.patch("/:id/status", allowRoles(STAFF), updateStatus);
+router.post("/:id/request-conversion", allowRoles(STAFF), requestConversion);
+router.post("/:id/approve-conversion", allowRoles(MANAGERS), approveConversion);
+router.post("/:id/reject-conversion", allowRoles(MANAGERS), rejectConversion);
+router.post("/:id/approve-review", allowRoles(MANAGERS), approveReview);
+router.post("/:id/reject-review", allowRoles(MANAGERS), rejectReview);
+router.post("/:id/restore", allowRoles(MANAGERS), restoreLead);
+router.delete("/:id/permanent", allowRoles([ROLES.ADMIN]), purgeLead);
 
-  res.json(data);
-});
-
-// UPDATE LEAD
-router.put("/:id", async (req, res) => {
-  const { data, error } = await supabase
-    .from("leads")
-    .update(req.body)
-    .eq("id", req.params.id)
-    .select()
-    .single();
-
-  if (error) return res.status(400).json(error);
-
-  res.json(data);
-});
-
-// DELETE LEAD
-router.delete("/:id", async (req, res) => {
-  const { error } = await supabase
-    .from("leads")
-    .delete()
-    .eq("id", req.params.id);
-
-  if (error) return res.status(400).json(error);
-
-  res.json({ message: "Deleted" });
-});
+// Item
+router.get("/:id", getLeadById);
+router.put("/:id", allowRoles(STAFF), updateLead);
+router.delete("/:id", allowRoles(MANAGERS), deleteLead);
 
 export default router;

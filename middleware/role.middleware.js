@@ -1,33 +1,38 @@
-import { supabase } from "../config/supabase.js";
+import { supabaseAdmin } from "../config/supabase.js";
 
+/**
+ * Gate a route to specific roles. Relies on authMiddleware having attached
+ * req.role; falls back to a profiles lookup if it's missing.
+ */
 export const allowRoles = (allowedRoles = []) => {
     return async (req, res, next) => {
         try {
-            const userId = req.user.id;
+            let role = req.role;
 
-            const { data, error } = await supabase
-                .from("profiles")
-                .select("role")
-                .eq("id", userId)
-                .single();
+            if (!role) {
+                if (!req.user?.id) {
+                    return res.status(401).json({ message: "Not authenticated" });
+                }
+                const { data, error } = await supabaseAdmin
+                    .from("profiles")
+                    .select("role")
+                    .eq("id", req.user.id)
+                    .single();
 
-            if (error || !data) {
-                return res.status(403).json({ message: "Role not found" });
+                if (error || !data) {
+                    return res.status(403).json({ message: "Role not found" });
+                }
+                role = data.role;
+                req.role = role;
             }
-
-            const role = data.role;
 
             if (!allowedRoles.includes(role)) {
-                return res.status(403).json({
-                    message: "Access denied",
-                    role,
-                });
+                return res.status(403).json({ message: "Access denied", role });
             }
 
-            req.role = role;
             next();
         } catch (err) {
-            res.status(500).json({ message: err.message });
+            next(err);
         }
     };
 };

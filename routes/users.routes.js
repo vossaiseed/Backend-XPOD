@@ -1,11 +1,12 @@
 import express from "express";
-import { supabase } from "../config/supabase.js";
+import { authMiddleware } from "../middleware/auth.middleware.js";
+import { listProfiles, getProfile } from "../controller/users.controller.js";
 
 const router = express.Router();
 
-router.get("/", async (req, res) => {
-  const { data } = await supabase.from("profiles").select("*");
-  res.json(data);
-});
+router.use(authMiddleware);
+
+router.get("/", listProfiles);
+router.get("/:id", getProfile);
 
 export default router;

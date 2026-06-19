@@ -1,161 +1,59 @@
-import { supabase } from "../config/supabase.js";
-import bcrypt from "bcrypt";
+import { asyncHandler } from "../utils/asyncHandler.js";
+import { ApiError } from "../utils/ApiError.js";
+import * as partnersService from "../services/partners.service.js";
 
-/* ─────────────────────────────
-   CREATE PARTNER (ADMIN ONLY)
-────────────────────────────── */
-export const createPartner = async (req, res) => {
-  try {
-    const {
-      name,
-      email,
-      phone,
-      password,
-      location,
-      state,
-      company,
-      partner_type,
-      photo_url,
-      royalty_percent,
-    } = req.body;
+// GET /api/partners
+export const getPartners = asyncHandler(async (req, res) => {
+    res.json(await partnersService.listPartners());
+});
 
-    if (!email || !password) {
-      return res.status(400).json({ error: "Email and password required" });
-    }
-
-    /* 1. Create Auth User (Supabase Admin API) */
-    const { data: authData, error: authError } =
-      await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: {
-          name,
-          phone,
-          role: "partner",
-        },
-      });
-
-    if (authError) {
-      return res.status(400).json({ error: authError.message });
-    }
-
-    const userId = authData.user.id;
-
-    /* 2. Insert into profiles */
-    const { error: profileError } = await supabase
-      .from("profiles")
-      .upsert({
-        id: userId,
-        name,
-        email,
-        phone,
-        role: "partner",
-        status: "active",
-      });
-
-    if (profileError) {
-      return res.status(400).json({ error: profileError.message });
-    }
-
-    /* 3. Insert into partners */
-    const { data, error } = await supabase
-      .from("partners")
-      .insert({
-        user_id: userId,
-        name,
-        email,
-        phone,
-        location,
-        state,
-        company,
-        partner_type,
-        photo_url,
-        royalty_percent: royalty_percent || 0,
-        status: "active",
-        temp_password: password, // (optional, remove in production)
-      })
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
-    return res.status(201).json({
-      message: "Partner created successfully",
-      data,
+// GET /api/partners/me — the logged-in partner's own profile + stats + leads
+export const getMe = asyncHandler(async (req, res) => {
+    const data = await partnersService.getPartnerSelf({
+        userId: req.user?.id,
+        phone: req.profile?.phone,
     });
-  } catch (err) {
-    return res.status(500).json({ error: err.message });
-  }
-};
-
-/* ─────────────────────────────
-   GET ALL PARTNERS
-────────────────────────────── */
-export const getPartners = async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from("partners")
-      .select("*")
-      .order("created_at", { ascending: false });
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
     res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+});
 
-/* ─────────────────────────────
-   UPDATE PARTNER
-────────────────────────────── */
-export const updatePartner = async (req, res) => {
-  try {
-    const { id } = req.params;
+// GET /api/partners/:id
+export const getPartner = asyncHandler(async (req, res) => {
+    res.json(await partnersService.getPartner(req.params.id));
+});
 
-    const { data, error } = await supabase
-      .from("partners")
-      .update(req.body)
-      .eq("id", id)
-      .select()
-      .single();
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
+// POST /api/partners
+export const createPartner = asyncHandler(async (req, res) => {
+    const { email, phone, password } = req.body;
+    if (!password) throw ApiError.badRequest("Password is required");
+    if (!email && !phone) {
+        throw ApiError.badRequest("Email or phone is required");
     }
-
-    res.json({
-      message: "Partner updated",
-      data,
+    const data = await partnersService.createPartner(req.body);
+    const loginEnabled = Boolean(data.user_id);
+    res.status(201).json({
+        message: loginEnabled
+            ? "Partner created successfully"
+            : "Partner created, but no login account was made. Set SUPABASE_SERVICE_ROLE_KEY to enable login.",
+        loginEnabled,
+        data,
     });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+});
 
-/* ─────────────────────────────
-   DELETE PARTNER
-────────────────────────────── */
-export const deletePartner = async (req, res) => {
-  try {
-    const { id } = req.params;
+// PUT /api/partners/:id
+export const updatePartner = asyncHandler(async (req, res) => {
+    const data = await partnersService.updatePartner(req.params.id, req.body);
+    res.json({ message: "Partner updated", data });
+});
 
-    const { error } = await supabase
-      .from("partners")
-      .delete()
-      .eq("id", id);
-
-    if (error) {
-      return res.status(400).json({ error: error.message });
-    }
-
+// DELETE /api/partners/:id
+export const deletePartner = asyncHandler(async (req, res) => {
+    await partnersService.deletePartner(req.params.id);
     res.json({ message: "Partner deleted" });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+});
+
+// POST /api/partners/:id/reset-password  (also enables login if none exists)
+export const resetPartnerPassword = asyncHandler(async (req, res) => {
+    if (!req.body.password) throw ApiError.badRequest("Password is required");
+    await partnersService.resetPartnerPassword(req.params.id, req.body.password);
+    res.json({ message: "Login enabled / password reset" });
+});

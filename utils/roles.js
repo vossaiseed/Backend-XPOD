@@ -1,25 +1,22 @@
+/**
+ * Canonical role set. MUST match:
+ *   - the frontend src/auth/roles.js
+ *   - the profiles.role check constraint in schema.sql
+ */
 export const ROLES = {
     ADMIN: "admin",
-    LEAD_MANAGER: "lead_manager",
-    SALES_STAFF: "sales_staff",
+    SALESMAN: "salesman",
+    LEAD_MANAGER: "leadmanager",
     PARTNER: "partner",
 };
 
-export const homeForRole = (role) => {
-    switch (role) {
-        case "admin":
-            return "/AdminCRM";
+export const ALL_ROLES = Object.values(ROLES);
 
-        case "lead_manager":
-            return "/LeadManagerDashboard";
-
-        case "sales_staff":
-            return "/SalesmanDashboard";
-
-        case "partner":
-            return "/PartnerDashboard";
-
-        default:
-            return "/login";
-    }
+export const ROLE_HOME = {
+    [ROLES.ADMIN]: "/AdminCRM",
+    [ROLES.SALESMAN]: "/SalesmanDashboard",
+    [ROLES.LEAD_MANAGER]: "/LeadManagerDashboard",
+    [ROLES.PARTNER]: "/PartnerDashboard",
 };
+
+export const homeForRole = (role) => ROLE_HOME[role] ?? "/login";

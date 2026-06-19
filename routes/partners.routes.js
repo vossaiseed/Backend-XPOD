@@ -2,8 +2,11 @@ import express from "express";
 import {
     createPartner,
     getPartners,
+    getPartner,
+    getMe,
     updatePartner,
     deletePartner,
+    resetPartnerPassword,
 } from "../controller/partners.controller.js";
 
 import { authMiddleware } from "../middleware/auth.middleware.js";
@@ -12,9 +15,14 @@ import { ROLES } from "../utils/roles.js";
 
 const router = express.Router();
 
-router.post("/", authMiddleware, allowRoles([ROLES.ADMIN]), createPartner);
-router.get("/", authMiddleware, getPartners);
-router.put("/:id", authMiddleware, updatePartner);
-router.delete("/:id", authMiddleware, deletePartner);
+router.use(authMiddleware);
+
+router.get("/", getPartners);
+router.get("/me", getMe); // must be before "/:id"
+router.get("/:id", getPartner);
+router.post("/", allowRoles([ROLES.ADMIN]), createPartner);
+router.put("/:id", allowRoles([ROLES.ADMIN]), updatePartner);
+router.delete("/:id", allowRoles([ROLES.ADMIN]), deletePartner);
+router.post("/:id/reset-password", allowRoles([ROLES.ADMIN]), resetPartnerPassword);
 
 export default router;

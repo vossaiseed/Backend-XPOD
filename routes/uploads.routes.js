@@ -1,9 +1,9 @@
 import express from "express";
 import { authMiddleware } from "../middleware/auth.middleware.js";
-import { getDashboard } from "../controller/dashboard.controller.js";
+import { uploadImage } from "../controller/uploads.controller.js";
 
 const router = express.Router();
 
-router.get("/", authMiddleware, getDashboard);
+router.post("/", authMiddleware, uploadImage);
 
 export default router;
