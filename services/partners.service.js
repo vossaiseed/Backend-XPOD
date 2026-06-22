@@ -9,6 +9,8 @@ import {
 } from "./users.service.js";
 import { ROLES } from "../utils/roles.js";
 import { LEAD_STATUS } from "../utils/leadStatus.js";
+import { columnExists } from "../utils/db.js";
+import { logActivity } from "./activity.service.js";
 
 const TABLE = "partners";
 
@@ -46,7 +48,7 @@ export const getPartnerSelf = async ({ userId, phone }) => {
 
     const { data: leads = [] } = await supabaseAdmin
         .from("leads")
-        .select("id, name, phone, location, status, notes, value, created_at")
+        .select("*")
         .eq("partner_id", partner.id)
         .is("deleted_at", null)
         .order("created_at", { ascending: false });
@@ -55,9 +57,31 @@ export const getPartnerSelf = async ({ userId, phone }) => {
     const converted = rows.filter((l) => l.status === LEAD_STATUS.CONVERTED);
     const royaltyEarned = converted.reduce(
         (sum, l) =>
-            sum + (Number(l.value || 0) * Number(partner.royalty_percent || 0)) / 100,
+            // prefer the per-deal royalty captured at conversion, else the partner's default
+            sum +
+            (Number(l.value || 0) *
+                Number(l.royalty_percent ?? partner.royalty_percent ?? 0)) /
+                100,
         0
     );
+
+    // Recent activity = latest reports on this partner's leads (sales updates,
+    // conversions, etc.). Best-effort: empty if the lead_reports table is absent.
+    let recentActivity = [];
+    const leadIds = rows.map((l) => l.id);
+    if (leadIds.length) {
+        const { data: reports } = await supabaseAdmin
+            .from("lead_reports")
+            .select("*")
+            .in("lead_id", leadIds)
+            .order("created_at", { ascending: false })
+            .limit(15);
+        const nameById = Object.fromEntries(rows.map((l) => [l.id, l.name]));
+        recentActivity = (reports || []).map((r) => ({
+            ...r,
+            lead_name: nameById[r.lead_id] || "",
+        }));
+    }
 
     return {
         partner,
@@ -68,14 +92,18 @@ export const getPartnerSelf = async ({ userId, phone }) => {
             royaltyEarned,
         },
         leads: rows,
+        recentActivity,
     };
 };
 
 export const listPartners = async () => {
-    const { data, error } = await supabaseAdmin
+    let query = supabaseAdmin
         .from(TABLE)
         .select("*")
         .order("created_at", { ascending: false });
+    if (await columnExists(TABLE, "deleted_at")) query = query.is("deleted_at", null);
+    if (await columnExists(TABLE, "archived_at")) query = query.is("archived_at", null);
+    const { data, error } = await query;
     if (error) throw fromSupabase(error);
     return data;
 };
@@ -209,12 +237,51 @@ export const resetPartnerPassword = async (id, password) => {
     return { id, loginEnabled: true, password };
 };
 
-export const deletePartner = async (id) => {
+// Move to Trash — soft delete via deleted_at (falls back to hard delete only
+// if the migration hasn't been run).
+export const deletePartner = async (id, actorName) => {
     const existing = await getPartner(id).catch(() => null);
 
-    const { error } = await supabaseAdmin.from(TABLE).delete().eq("id", id);
+    if (await columnExists(TABLE, "deleted_at")) {
+        const { error } = await supabaseAdmin
+            .from(TABLE)
+            .update({ deleted_at: new Date().toISOString() })
+            .eq("id", id);
+        if (error) throw fromSupabase(error);
+    } else {
+        const { error } = await supabaseAdmin.from(TABLE).delete().eq("id", id);
+        if (error) throw fromSupabase(error);
+        if (existing?.user_id) await deleteAuthUser(existing.user_id);
+    }
+
+    await logActivity({
+        action: "deleted",
+        entityType: "partner",
+        entityId: id,
+        entityName: existing?.name,
+        actorName,
+    });
+    return { id };
+};
+
+// Archive — hidden from the main list via archived_at (kept out of Trash).
+export const archivePartner = async (id, actorName) => {
+    if (!(await columnExists(TABLE, "archived_at"))) {
+        throw new ApiError(400, "Archiving needs the latest DB migration (archived_at column).");
+    }
+    const existing = await getPartner(id).catch(() => null);
+    const { error } = await supabaseAdmin
+        .from(TABLE)
+        .update({ archived_at: new Date().toISOString() })
+        .eq("id", id);
     if (error) throw fromSupabase(error);
 
-    if (existing?.user_id) await deleteAuthUser(existing.user_id);
+    await logActivity({
+        action: "archived",
+        entityType: "partner",
+        entityId: id,
+        entityName: existing?.name,
+        actorName,
+    });
     return { id };
 };

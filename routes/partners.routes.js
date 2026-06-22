@@ -6,6 +6,7 @@ import {
     getMe,
     updatePartner,
     deletePartner,
+    archivePartner,
     resetPartnerPassword,
 } from "../controller/partners.controller.js";
 
@@ -23,6 +24,7 @@ router.get("/:id", getPartner);
 router.post("/", allowRoles([ROLES.ADMIN]), createPartner);
 router.put("/:id", allowRoles([ROLES.ADMIN]), updatePartner);
 router.delete("/:id", allowRoles([ROLES.ADMIN]), deletePartner);
+router.post("/:id/archive", allowRoles([ROLES.ADMIN]), archivePartner);
 router.post("/:id/reset-password", allowRoles([ROLES.ADMIN]), resetPartnerPassword);
 
 export default router;

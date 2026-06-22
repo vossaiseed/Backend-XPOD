@@ -95,6 +95,22 @@ export const getAdminDashboard = async () => {
                 .limit(10)
     );
 
+    const salesCapacity = await safeSelect(
+        "sales_team",
+        "id, name, capacity, max_lead_capacity"
+    );
+
+    // Royalty earned = sum over converted leads of value × royalty%
+    // (per-deal royalty if set, else the partner's default).
+    const partnerById = Object.fromEntries(partnerRows.map((p) => [p.id, p]));
+    const convertedForRoyalty = await safeSelect("leads", "*", (q) =>
+        notTrashed(q).eq("status", LEAD_STATUS.CONVERTED)
+    );
+    const totalRoyalty = convertedForRoyalty.reduce((sum, l) => {
+        const pct = l.royalty_percent ?? partnerById[l.partner_id]?.royalty_percent ?? 0;
+        return sum + (Number(l.value || 0) * Number(pct)) / 100;
+    }, 0);
+
     return {
         stats: {
             totalLeads,
@@ -103,7 +119,7 @@ export const getAdminDashboard = async () => {
             conversionRequests,
             vipLeads,
             totalRevenue,
-            totalRoyalty: 0,
+            totalRoyalty,
             partners,
             salesStaff,
             leadManagers,
@@ -112,6 +128,7 @@ export const getAdminDashboard = async () => {
         pendingReview: pendingReviewList,
         conversionRequests: conversionList,
         partners: partnerRows,
+        salesCapacity,
     };
 };
 

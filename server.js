@@ -10,6 +10,8 @@ import leadManagersRoutes from "./routes/leadManagers.routes.js";
 import partnerRoutes from "./routes/partners.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import uploadRoutes from "./routes/uploads.routes.js";
+import trashRoutes from "./routes/trash.routes.js";
+import settingsRoutes from "./routes/settings.routes.js";
 
 import { notFound, errorHandler } from "./middleware/error.middleware.js";
 
@@ -48,6 +50,8 @@ app.use("/api/lead-managers", leadManagersRoutes);
 app.use("/api/partners", partnerRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/trash", trashRoutes);
+app.use("/api/settings", settingsRoutes);
 
 // 404 + error handling (must be last)
 app.use(notFound);

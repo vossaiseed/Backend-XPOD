@@ -2,6 +2,7 @@ import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import * as usersService from "../services/users.service.js";
 import { leadManagerService } from "../services/sales.service.js";
+import { actorName } from "../utils/audit.js";
 
 /* ── Profiles ─────────────────────────────────────────────────────────── */
 
@@ -48,8 +49,14 @@ export const updateLeadManager = asyncHandler(async (req, res) => {
 
 // DELETE /api/lead-managers/:id
 export const deleteLeadManager = asyncHandler(async (req, res) => {
-    await leadManagerService.remove(req.params.id);
+    await leadManagerService.remove(req.params.id, actorName(req));
     res.json({ message: "Lead manager deleted" });
+});
+
+// POST /api/lead-managers/:id/archive
+export const archiveLeadManager = asyncHandler(async (req, res) => {
+    await leadManagerService.archive(req.params.id, actorName(req));
+    res.json({ message: "Lead manager archived" });
 });
 
 // POST /api/lead-managers/:id/reset-password

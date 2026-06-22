@@ -1,6 +1,7 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import * as partnersService from "../services/partners.service.js";
+import { actorName } from "../utils/audit.js";
 
 // GET /api/partners
 export const getPartners = asyncHandler(async (req, res) => {
@@ -47,8 +48,14 @@ export const updatePartner = asyncHandler(async (req, res) => {
 
 // DELETE /api/partners/:id
 export const deletePartner = asyncHandler(async (req, res) => {
-    await partnersService.deletePartner(req.params.id);
+    await partnersService.deletePartner(req.params.id, actorName(req));
     res.json({ message: "Partner deleted" });
+});
+
+// POST /api/partners/:id/archive
+export const archivePartner = asyncHandler(async (req, res) => {
+    await partnersService.archivePartner(req.params.id, actorName(req));
+    res.json({ message: "Partner archived" });
 });
 
 // POST /api/partners/:id/reset-password  (also enables login if none exists)

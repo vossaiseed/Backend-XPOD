@@ -7,6 +7,7 @@ import {
     createLeadManager,
     updateLeadManager,
     deleteLeadManager,
+    archiveLeadManager,
     resetLeadManagerPassword,
 } from "../controller/users.controller.js";
 
@@ -18,6 +19,7 @@ router.get("/", listLeadManagers);
 router.post("/", allowRoles([ROLES.ADMIN]), createLeadManager);
 router.put("/:id", allowRoles([ROLES.ADMIN]), updateLeadManager);
 router.delete("/:id", allowRoles([ROLES.ADMIN]), deleteLeadManager);
+router.post("/:id/archive", allowRoles([ROLES.ADMIN]), archiveLeadManager);
 router.post(
     "/:id/reset-password",
     allowRoles([ROLES.ADMIN]),

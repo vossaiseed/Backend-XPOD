@@ -1,10 +1,25 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
-import { salesService } from "../services/sales.service.js";
+import { salesService, getSalesSelf, getSalesTeamStats } from "../services/sales.service.js";
+import { actorName } from "../utils/audit.js";
 
 // GET /api/sales-team
 export const listSalesTeam = asyncHandler(async (req, res) => {
     res.json(await salesService.list());
+});
+
+// GET /api/sales-team/stats — sales members + per-member lead stats
+export const listSalesStats = asyncHandler(async (req, res) => {
+    res.json(await getSalesTeamStats());
+});
+
+// GET /api/sales-team/me — the logged-in salesman's own profile + stats + leads
+export const getMe = asyncHandler(async (req, res) => {
+    const data = await getSalesSelf({
+        userId: req.user?.id,
+        phone: req.profile?.phone,
+    });
+    res.json(data);
 });
 
 // GET /api/sales-team/:id
@@ -36,8 +51,14 @@ export const updateSalesPerson = asyncHandler(async (req, res) => {
 
 // DELETE /api/sales-team/:id
 export const deleteSalesPerson = asyncHandler(async (req, res) => {
-    await salesService.remove(req.params.id);
+    await salesService.remove(req.params.id, actorName(req));
     res.json({ message: "Sales person deleted" });
+});
+
+// POST /api/sales-team/:id/archive
+export const archiveSalesPerson = asyncHandler(async (req, res) => {
+    await salesService.archive(req.params.id, actorName(req));
+    res.json({ message: "Sales person archived" });
 });
 
 // POST /api/sales-team/:id/reset-password

@@ -1,26 +1,22 @@
 import { supabaseAdmin } from "../config/supabase.js";
 import { fromSupabase } from "../utils/ApiError.js";
 import { LEAD_STATUS } from "../utils/leadStatus.js";
+import { columnExists } from "../utils/db.js";
 
 const TABLE = "leads";
 
-// Cache whether the optional `whatsapp` column exists, so writes don't fail on
-// DBs where the migration (db/add-lead-whatsapp.sql) hasn't been run yet.
-let whatsappColumn = null;
-const hasWhatsappColumn = async () => {
-    if (whatsappColumn !== null) return whatsappColumn;
-    const { error } = await supabaseAdmin.from(TABLE).select("whatsapp").limit(1);
-    whatsappColumn = !error;
-    return whatsappColumn;
-};
+// Optional columns added by later migrations — dropped from writes if the DB
+// doesn't have them yet, so the whole insert/update isn't rejected.
+const OPTIONAL_COLS = ["whatsapp", "created_by", "royalty_percent", "requirement"];
 
-// Drop columns the DB doesn't have yet so the whole insert/update isn't rejected.
 const stripUnknown = async (payload) => {
-    if (payload.whatsapp !== undefined && !(await hasWhatsappColumn())) {
-        const { whatsapp, ...rest } = payload;
-        return rest;
+    const out = { ...payload };
+    for (const col of OPTIONAL_COLS) {
+        if (out[col] !== undefined && !(await columnExists(TABLE, col))) {
+            delete out[col];
+        }
     }
-    return payload;
+    return out;
 };
 
 /**
@@ -35,7 +31,9 @@ export const listLeads = async (filters = {}) => {
         lead_manager_id,
         is_vip,
         is_general,
+        managed, // "true" — added by a lead manager (lead_manager_id set)
         assigned, // "true" | "false" — has an owner or not
+        pool, // "true" — claimable pool: unassigned, reviewed, still active
         trashed,
         search,
     } = filters;
@@ -52,8 +50,26 @@ export const listLeads = async (filters = {}) => {
     if (is_general === true) query = query.is("partner_id", null);
     if (is_general === false) query = query.not("partner_id", "is", null);
 
+    // "managed" = added by a lead manager
+    if (managed === true) query = query.not("lead_manager_id", "is", null);
+
     if (assigned === true) query = query.not("assigned_to", "is", null);
     if (assigned === false) query = query.is("assigned_to", null);
+
+    // Claimable Lead Pool: unassigned AND reviewed (not the partner-submitted
+    // "pending" state) AND not in a terminal state.
+    if (pool === true) {
+        query = query
+            .is("assigned_to", null)
+            .not("status", "in",
+                `(${[
+                    LEAD_STATUS.PENDING,
+                    LEAD_STATUS.CONVERTED,
+                    LEAD_STATUS.FAILED,
+                    LEAD_STATUS.NOT_INTERESTED,
+                ].join(",")})`
+            );
+    }
 
     // Trash handling via deleted_at
     if (trashed === true) {
@@ -142,3 +158,34 @@ export const approveReview = (id) => updateLead(id, { status: LEAD_STATUS.NEW })
 /** Reject a pending lead → trash it. */
 export const rejectReview = (id) =>
     updateLead(id, { deleted_at: new Date().toISOString() });
+
+/* ── Reports / activity timeline ──────────────────────────────────────── */
+
+export const listReports = async (leadId) => {
+    const { data, error } = await supabaseAdmin
+        .from("lead_reports")
+        .select("*")
+        .eq("lead_id", leadId)
+        .order("created_at", { ascending: false });
+    if (error) return []; // table may not exist yet
+    return data || [];
+};
+
+/** Add a report and (optionally) move the lead to the given status. */
+export const addReport = async (leadId, { note, status, next_followup }, authorName) => {
+    const { data, error } = await supabaseAdmin
+        .from("lead_reports")
+        .insert({
+            lead_id: leadId,
+            note: note || null,
+            status: status || null,
+            next_followup: next_followup || null,
+            author_name: authorName || null,
+        })
+        .select()
+        .single();
+    if (error) throw fromSupabase(error);
+
+    if (status) await updateLead(leadId, { status });
+    return data;
+};
