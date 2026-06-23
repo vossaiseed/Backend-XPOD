@@ -133,42 +133,106 @@ export const getAdminDashboard = async () => {
 };
 
 /** Lead-manager dashboard, optionally scoped to one manager's leads. */
-export const getLeadManagerDashboard = async (leadManagerId) => {
-    const scope = (q) =>
-        leadManagerId ? q.eq("lead_manager_id", leadManagerId) : q;
-
-    const [totalLeads, converted, assigned, conversionRequests, vipLeads] =
-        await Promise.all([
-            safeCount("leads", (q) => scope(notTrashed(q))),
-            safeCount("leads", (q) =>
-                scope(notTrashed(q)).eq("status", LEAD_STATUS.CONVERTED)
-            ),
-            safeCount("leads", (q) =>
-                scope(notTrashed(q)).not("assigned_to", "is", null)
-            ),
-            safeCount("leads", (q) =>
-                scope(notTrashed(q)).eq("status", LEAD_STATUS.CONVERSION_REQUESTED)
-            ),
-            safeCount("leads", (q) =>
-                scope(notTrashed(q)).eq("is_vip", true)
-            ),
-        ]);
-
-    const salesStaff = await safeSelect(
-        "sales_team",
-        "id, name, capacity, max_lead_capacity, active"
+export const getLeadManagerDashboard = async () => {
+    // The lead manager oversees the whole lead flow, so the dashboard reflects
+    // all live (non-trashed) leads — not just ones they created.
+    const leads = await safeSelect(
+        "leads",
+        "id, name, status, assigned_to, is_vip, value, created_at, updated_at",
+        notTrashed
     );
+    const staff = await safeSelect("sales_team", "id, name, capacity, max_lead_capacity");
+    const staffById = Object.fromEntries(staff.map((s) => [s.id, s]));
+
+    const ACTIVE = [
+        LEAD_STATUS.NEW,
+        LEAD_STATUS.IN_PROGRESS,
+        LEAD_STATUS.DISCUSSION,
+        LEAD_STATUS.FOLLOWUP,
+        LEAD_STATUS.CONVERSION_REQUESTED,
+    ];
+    const now = Date.now();
+    const hoursSince = (d) => (d ? (now - new Date(d).getTime()) / 3600000 : Infinity);
+    const isToday = (d) => {
+        if (!d) return false;
+        const x = new Date(d);
+        const t = new Date();
+        return (
+            x.getFullYear() === t.getFullYear() &&
+            x.getMonth() === t.getMonth() &&
+            x.getDate() === t.getDate()
+        );
+    };
+    const byStatus = (st) => leads.filter((l) => l.status === st).length;
+
+    const pipeline = {
+        pending: byStatus(LEAD_STATUS.PENDING),
+        new: byStatus(LEAD_STATUS.NEW),
+        discussion: byStatus(LEAD_STATUS.DISCUSSION),
+        followup: byStatus(LEAD_STATUS.FOLLOWUP),
+        converted: byStatus(LEAD_STATUS.CONVERTED),
+        failed: byStatus(LEAD_STATUS.FAILED),
+    };
+
+    // Inactive = assigned + still active + no update within 48h.
+    const inactiveRows = leads.filter(
+        (l) =>
+            l.assigned_to &&
+            ACTIVE.includes(l.status) &&
+            hoursSince(l.updated_at || l.created_at) >= 48
+    );
+    const inactiveLeads = inactiveRows.slice(0, 30).map((l) => ({
+        id: l.id,
+        name: l.name,
+        sales_staff_name: staffById[l.assigned_to]?.name || "Unassigned",
+    }));
+
+    // Per-staff load + performance.
+    const salesStaff = staff.map((s) => {
+        const mine = leads.filter((l) => l.assigned_to === s.id);
+        const converted = mine.filter((l) => l.status === LEAD_STATUS.CONVERTED).length;
+        const failed = mine.filter((l) => l.status === LEAD_STATUS.FAILED).length;
+        const assigned = mine.length;
+        const active = Math.max(0, assigned - converted - failed);
+        const capacity = Number(s.max_lead_capacity || s.capacity || 10);
+        return { id: s.id, name: s.name, assigned, converted, capacity, score: converted * 10 + active };
+    });
+
+    // Recent activity from the lead reports timeline (best-effort).
+    const reports = await safeSelect(
+        "lead_reports",
+        "id, lead_id, status, author_name, created_at",
+        (q) => q.order("created_at", { ascending: false }).limit(10)
+    );
+    const nameById = Object.fromEntries(leads.map((l) => [l.id, l.name]));
+    const recentActivity = reports.map((r) => ({
+        id: r.id,
+        user: r.author_name || "—",
+        lead: nameById[r.lead_id] || "a lead",
+        time: new Date(r.created_at).toLocaleString("en-IN", {
+            day: "2-digit",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+        }),
+    }));
 
     return {
         stats: {
-            totalLeads,
-            converted,
-            assigned,
-            conversionRequests,
-            vipLeads,
+            totalLeads: leads.length,
+            pendingReview: pipeline.pending,
+            vipLeads: leads.filter((l) => l.is_vip).length,
+            assignedToday: leads.filter((l) => l.assigned_to && isToday(l.updated_at || l.created_at)).length,
+            inactive: inactiveRows.length,
+            converted: pipeline.converted,
+            activeStaff: staff.length,
+            conversionRequests: byStatus(LEAD_STATUS.CONVERSION_REQUESTED),
         },
-        salesCapacity: salesStaff,
+        pipeline,
         salesStaff,
+        salesCapacity: salesStaff,
+        inactiveLeads,
+        recentActivity,
     };
 };
 

@@ -6,7 +6,7 @@ import { ROLES } from "../utils/roles.js";
 import { resolvePartner } from "../services/partners.service.js";
 import { resolveSalesMember } from "../services/sales.service.js";
 import { logActivity } from "../services/activity.service.js";
-import { actorName } from "../utils/audit.js";
+import { actorName, actorWithRole } from "../utils/audit.js";
 import { getSettings } from "../services/settings.service.js";
 
 /** Parse common list filters from the query string. */
@@ -72,6 +72,15 @@ export const createLead = asyncHandler(async (req, res) => {
 
     const data = await leadsService.createLead(payload);
 
+    // Notification feed entry.
+    await logActivity({
+        action: "created",
+        entityType: "lead",
+        entityId: data.id,
+        entityName: data.name,
+        actorName: actorWithRole(req),
+    });
+
     // Timeline entry for partner submissions (best-effort; needs lead_reports).
     if (partnerReviewOn !== null) {
         await leadsService
@@ -136,6 +145,13 @@ export const claimLead = asyncHandler(async (req, res) => {
     const data = await leadsService.assignLead(req.params.id, {
         assigned_to: member.id,
     });
+    await logActivity({
+        action: "claimed",
+        entityType: "lead",
+        entityId: req.params.id,
+        entityName: data?.name || lead?.name,
+        actorName: actorWithRole(req),
+    });
     res.json({ message: "Lead claimed", data });
 });
 
@@ -165,6 +181,13 @@ export const updateStatus = asyncHandler(async (req, res) => {
 // POST /api/leads/:id/request-conversion
 export const requestConversion = asyncHandler(async (req, res) => {
     const data = await leadsService.requestConversion(req.params.id);
+    await logActivity({
+        action: "requested_conversion",
+        entityType: "lead",
+        entityId: req.params.id,
+        entityName: data?.name,
+        actorName: actorWithRole(req),
+    });
     res.json({ message: "Conversion requested", data });
 });
 
@@ -208,5 +231,12 @@ export const addReport = asyncHandler(async (req, res) => {
         { note, status, next_followup },
         actorName(req)
     );
+    await logActivity({
+        action: "report",
+        entityType: "lead",
+        entityId: req.params.id,
+        entityName: next_followup ? `next follow-up: ${next_followup}` : null,
+        actorName: actorWithRole(req),
+    });
     res.status(201).json({ data });
 });

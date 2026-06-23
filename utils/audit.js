@@ -9,3 +9,20 @@ export const actorName = (req) => {
         ? `${base} (via Admin ${req.impersonatedBy.name})`
         : base;
 };
+
+const ROLE_LABEL = {
+    admin: "Admin",
+    salesman: "Sales Staff",
+    leadmanager: "Lead Manager",
+    partner: "Partner",
+};
+
+/** Actor name with a role label for notifications: "test sales (Sales Staff)". */
+export const actorWithRole = (req) => {
+    const base = req.profile?.name || req.role || "Someone";
+    const label = ROLE_LABEL[req.role];
+    const withRole = label ? `${base} (${label})` : base;
+    return req.impersonatedBy?.name
+        ? `${withRole} (via Admin ${req.impersonatedBy.name})`
+        : withRole;
+};
