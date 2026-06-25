@@ -27,6 +27,33 @@ export const login = asyncHandler(async (req, res) => {
         throw ApiError.badRequest("Invalid phone or password");
     }
 
+    // A deactivated sales account cannot log in (checked before signing in so we
+    // never mint a session for it). Look up their sales_team row by user_id, then
+    // phone as a fallback.
+    if (profile.role === "salesman") {
+        let member = (
+            await supabaseAdmin
+                .from("sales_team")
+                .select("active")
+                .eq("user_id", profile.id)
+                .maybeSingle()
+        ).data;
+        if (!member) {
+            member = (
+                await supabaseAdmin
+                    .from("sales_team")
+                    .select("active")
+                    .eq("phone", String(phone).trim())
+                    .maybeSingle()
+            ).data;
+        }
+        if (member && member.active === false) {
+            throw ApiError.forbidden(
+                "This account has been deactivated. Please contact your admin."
+            );
+        }
+    }
+
     const { data, error } = await supabase.auth.signInWithPassword({
         email: profile.email,
         password,

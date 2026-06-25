@@ -4,6 +4,7 @@ import { allowRoles } from "../middleware/role.middleware.js";
 import { ROLES } from "../utils/roles.js";
 import {
     getLeads,
+    getBadgeCounts,
     getLeadById,
     createLead,
     updateLead,
@@ -30,11 +31,14 @@ router.use(authMiddleware);
 const STAFF = [ROLES.ADMIN, ROLES.LEAD_MANAGER, ROLES.SALESMAN];
 const MANAGERS = [ROLES.ADMIN, ROLES.LEAD_MANAGER];
 // Partners can act on their own leads from the lead-detail page (add reports,
-// update/convert). NOTE: not yet scoped to ownership — see follow-up.
+// update/convert). Ownership is enforced in the controller (assertCanActOnLead):
+// a partner may only target leads linked to their own partner_id.
 const STAFF_AND_PARTNER = [...STAFF, ROLES.PARTNER];
 
 // Collection
 router.get("/", getLeads);
+// Sidebar badge counts — static path, declared BEFORE "/:id" so it isn't swallowed.
+router.get("/counts", allowRoles(MANAGERS), getBadgeCounts);
 router.post("/", allowRoles([...MANAGERS, ROLES.PARTNER]), createLead);
 
 // Lifecycle actions (declare BEFORE "/:id" so they aren't swallowed)

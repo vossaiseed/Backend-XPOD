@@ -61,6 +61,31 @@ export const listTrash = async () => {
     return items;
 };
 
+/**
+ * Lightweight total of everything in the trash — head/count queries only, no
+ * rows transferred. Matches listTrash().length exactly (same predicates).
+ */
+export const countTrash = async () => {
+    let total = 0;
+    for (const [, { table, mode }] of Object.entries(TYPES)) {
+        if (mode === "status") {
+            const { count } = await supabaseAdmin
+                .from(table)
+                .select("id", { count: "exact", head: true })
+                .eq("status", "trashed");
+            total += count || 0;
+        } else {
+            if (!(await columnExists(table, "deleted_at"))) continue;
+            const { count } = await supabaseAdmin
+                .from(table)
+                .select("id", { count: "exact", head: true })
+                .not("deleted_at", "is", null);
+            total += count || 0;
+        }
+    }
+    return total;
+};
+
 /** Everything currently archived (partners / sales / lead managers). */
 export const listArchived = async () => {
     const items = [];

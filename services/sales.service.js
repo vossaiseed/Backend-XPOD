@@ -4,6 +4,7 @@ import {
     provisionUser,
     deleteAuthUser,
     setUserPassword,
+    setUserBanned,
     ensureProfile,
     resolveAuthUserId,
 } from "./users.service.js";
@@ -158,6 +159,40 @@ const makeTeamService = (table, role) => ({
             actorName,
         });
         return { id };
+    },
+
+    /**
+     * Deactivate / reactivate an account: flips the `active` flag (kept IN the
+     * list, just marked inactive) and bans/un-bans the login so a deactivated
+     * member can't sign in. Reversible. No-op on the flag if there's no `active`
+     * column (only sales_team has one).
+     */
+    async setActive(id, active, actorName) {
+        const existing = await this.get(id);
+
+        if (await columnExists(table, "active")) {
+            const { error } = await supabaseAdmin
+                .from(table)
+                .update({ active })
+                .eq("id", id);
+            if (error) throw fromSupabase(error);
+        }
+
+        // Block (or restore) the login at the auth level.
+        const authId = await resolveAuthUserId({
+            userId: existing?.user_id,
+            phone: existing?.phone,
+        });
+        await setUserBanned(authId, !active);
+
+        await logActivity({
+            action: active ? "reactivated" : "deactivated",
+            entityType: ENTITY_TYPE[table],
+            entityId: id,
+            entityName: existing?.name,
+            actorName,
+        });
+        return { id, active };
     },
 
     /**
@@ -325,6 +360,50 @@ export const getSalesTeamStats = async () => {
             score,
         };
     });
+};
+
+/**
+ * The logged-in salesman's leads that have a scheduled follow-up date.
+ * Replaces the page's N+1 (one /reports request per lead) with TWO queries:
+ * the member's leads, then all their follow-up reports in a single `.in()` call.
+ */
+export const getSalesFollowups = async ({ userId, phone }) => {
+    const member = await resolveSalesMember({ userId, phone });
+    if (!member) throw ApiError.notFound("Sales record not found");
+
+    const { data: leads = [] } = await supabaseAdmin
+        .from("leads")
+        .select("id, name, phone, location, status, value, created_at, created_by")
+        .eq("assigned_to", member.id)
+        .is("deleted_at", null)
+        .order("created_at", { ascending: false });
+
+    const rows = leads || [];
+    if (!rows.length) return { member: { name: member.name }, leads: [] };
+
+    const ids = rows.map((l) => l.id);
+    // One query for every follow-up report across this member's leads
+    // (newest first). Best-effort: empty if the lead_reports table is absent.
+    const { data: reports = [] } = await supabaseAdmin
+        .from("lead_reports")
+        .select("lead_id, next_followup, created_at")
+        .in("lead_id", ids)
+        .not("next_followup", "is", null)
+        .order("created_at", { ascending: false });
+
+    // Most recent follow-up date per lead (mirrors the page's old .find()).
+    const followupByLead = {};
+    for (const r of reports || []) {
+        if (followupByLead[r.lead_id] === undefined) {
+            followupByLead[r.lead_id] = r.next_followup;
+        }
+    }
+
+    const withFollowup = rows
+        .filter((l) => followupByLead[l.id])
+        .map((l) => ({ ...l, followup: followupByLead[l.id] }));
+
+    return { member: { name: member.name }, leads: withFollowup };
 };
 
 /** The logged-in salesman's own profile + stats + assigned leads. */

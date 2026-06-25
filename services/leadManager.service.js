@@ -91,6 +91,34 @@ export const listLeads = async (filters = {}) => {
     return data;
 };
 
+/**
+ * Lightweight badge counts for the admin sidebar. Uses head/count queries so no
+ * lead rows are transferred (replaces a full getLeads("") fetch on every nav).
+ * Predicates mirror the sidebar's previous client-side filters exactly.
+ */
+export const getLeadBadgeCounts = async () => {
+    const countWhere = async (apply) => {
+        const q = apply(
+            supabaseAdmin
+                .from(TABLE)
+                .select("id", { count: "exact", head: true })
+                .is("deleted_at", null)
+        );
+        const { count, error } = await q;
+        if (error) throw fromSupabase(error);
+        return count || 0;
+    };
+
+    const [pending, conversionRequested, assigned, general] = await Promise.all([
+        countWhere((q) => q.eq("status", LEAD_STATUS.PENDING)),
+        countWhere((q) => q.eq("status", LEAD_STATUS.CONVERSION_REQUESTED)),
+        countWhere((q) => q.not("assigned_to", "is", null)),
+        countWhere((q) => q.not("lead_manager_id", "is", null)),
+    ]);
+
+    return { pending, conversionRequested, assigned, general };
+};
+
 export const getLead = async (id) => {
     const { data, error } = await supabaseAdmin
         .from(TABLE)

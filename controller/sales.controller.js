@@ -1,6 +1,6 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
-import { salesService, getSalesSelf, getSalesTeamStats } from "../services/sales.service.js";
+import { salesService, getSalesSelf, getSalesTeamStats, getSalesFollowups } from "../services/sales.service.js";
 import { actorName } from "../utils/audit.js";
 
 // GET /api/sales-team
@@ -16,6 +16,15 @@ export const listSalesStats = asyncHandler(async (req, res) => {
 // GET /api/sales-team/me — the logged-in salesman's own profile + stats + leads
 export const getMe = asyncHandler(async (req, res) => {
     const data = await getSalesSelf({
+        userId: req.user?.id,
+        phone: req.profile?.phone,
+    });
+    res.json(data);
+});
+
+// GET /api/sales-team/me/followups — the salesman's leads with a follow-up date
+export const getMyFollowups = asyncHandler(async (req, res) => {
+    const data = await getSalesFollowups({
         userId: req.user?.id,
         phone: req.profile?.phone,
     });
@@ -59,6 +68,18 @@ export const deleteSalesPerson = asyncHandler(async (req, res) => {
 export const archiveSalesPerson = asyncHandler(async (req, res) => {
     await salesService.archive(req.params.id, actorName(req));
     res.json({ message: "Sales person archived" });
+});
+
+// POST /api/sales-team/:id/deactivate — disable the account + block login.
+export const deactivateSalesPerson = asyncHandler(async (req, res) => {
+    await salesService.setActive(req.params.id, false, actorName(req));
+    res.json({ message: "Sales person deactivated" });
+});
+
+// POST /api/sales-team/:id/reactivate — re-enable the account + restore login.
+export const reactivateSalesPerson = asyncHandler(async (req, res) => {
+    await salesService.setActive(req.params.id, true, actorName(req));
+    res.json({ message: "Sales person reactivated" });
 });
 
 // POST /api/sales-team/:id/reset-password

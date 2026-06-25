@@ -102,6 +102,22 @@ export const deleteAuthUser = async (userId) => {
     }
 };
 
+/**
+ * Ban / un-ban an auth user (admin). Banning blocks new sign-ins and refreshes
+ * — used to disable a deactivated account's login. Best-effort: the data-level
+ * `active` flag + the login check enforce deactivation even if this no-ops.
+ */
+export const setUserBanned = async (userId, banned) => {
+    if (!userId || !hasServiceRole) return;
+    try {
+        await supabaseAdmin.auth.admin.updateUserById(userId, {
+            ban_duration: banned ? "876000h" : "none",
+        });
+    } catch {
+        // ignore — deactivation is still enforced by the `active` flag + login check
+    }
+};
+
 /** Reset a user's password (admin). */
 export const setUserPassword = async (userId, password) => {
     if (!hasServiceRole) {

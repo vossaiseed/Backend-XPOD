@@ -1,6 +1,7 @@
 import { asyncHandler } from "../utils/asyncHandler.js";
 import { ApiError } from "../utils/ApiError.js";
 import * as leadsService from "../services/leadManager.service.js";
+import * as trashService from "../services/trash.service.js";
 import { ALL_STATUSES, LEAD_STATUS } from "../utils/leadStatus.js";
 import { ROLES } from "../utils/roles.js";
 import { resolvePartner } from "../services/partners.service.js";
@@ -8,6 +9,25 @@ import { resolveSalesMember } from "../services/sales.service.js";
 import { logActivity } from "../services/activity.service.js";
 import { actorName, actorWithRole } from "../utils/audit.js";
 import { getSettings } from "../services/settings.service.js";
+
+/**
+ * Ownership guard. Staff (admin / lead manager / sales) may act on any lead.
+ * A partner may only act on leads linked to their OWN partner record — otherwise
+ * they could edit, convert, or comment on someone else's lead by guessing an id.
+ * Throws 403 when a partner targets a lead that isn't theirs. No-op for staff.
+ */
+const assertCanActOnLead = async (req, leadId) => {
+    if (req.role !== ROLES.PARTNER) return;
+    const partner = await resolvePartner({
+        userId: req.user?.id,
+        phone: req.profile?.phone,
+    });
+    if (!partner) throw ApiError.forbidden("Partner record not found");
+    const lead = await leadsService.getLead(leadId);
+    if (!lead || lead.partner_id !== partner.id) {
+        throw ApiError.forbidden("You can only act on your own leads");
+    }
+};
 
 /** Parse common list filters from the query string. */
 const parseFilters = (query) => {
@@ -33,6 +53,15 @@ export const getLeads = asyncHandler(async (req, res) => {
     res.json({ data, count: data.length });
 });
 
+// GET /api/leads/counts — lightweight badge counts for the admin sidebar.
+export const getBadgeCounts = asyncHandler(async (req, res) => {
+    const [leadCounts, trash] = await Promise.all([
+        leadsService.getLeadBadgeCounts(),
+        trashService.countTrash(),
+    ]);
+    res.json({ ...leadCounts, trash });
+});
+
 // GET /api/leads/:id
 export const getLeadById = asyncHandler(async (req, res) => {
     const data = await leadsService.getLead(req.params.id);
@@ -46,8 +75,16 @@ export const createLead = asyncHandler(async (req, res) => {
     // Record who added the lead (shown as the "By" name on cards).
     payload.created_by = actorName(req);
 
-    // A lead manager's own leads are tagged with their id so they show under
-    // admin "General Leads" (manager-added) and the LM's own dashboard.
+    // A lead manager's own leads are tagged so they show under admin
+    // "General Leads" (manager-added) and the LM's own dashboard.
+    // TODO(#6): req.profile.id is the auth user id (profiles.id), NOT the
+    // lead_managers.id domain row. Every current consumer only checks this
+    // column for NULL/NOT NULL (the `managed` filter), so the app works; but a
+    // join leads.lead_manager_id -> lead_managers.id (e.g. LeadBoard "By" label)
+    // won't resolve and silently falls back to created_by. A correct fix must
+    // store lead_managers.id here AND backfill existing rows
+    // (UPDATE leads l SET lead_manager_id = lm.id FROM lead_managers lm
+    //  WHERE lm.user_id = l.lead_manager_id). Deferred: needs a data backfill.
     if (req.role === ROLES.LEAD_MANAGER && req.profile?.id) {
         payload.lead_manager_id = req.profile.id;
     }
@@ -102,6 +139,7 @@ export const createLead = asyncHandler(async (req, res) => {
 
 // PUT /api/leads/:id
 export const updateLead = asyncHandler(async (req, res) => {
+    await assertCanActOnLead(req, req.params.id);
     const data = await leadsService.updateLead(req.params.id, req.body);
     res.json({ data });
 });
@@ -174,6 +212,7 @@ export const updateStatus = asyncHandler(async (req, res) => {
             `status must be one of: ${ALL_STATUSES.join(", ")}`
         );
     }
+    await assertCanActOnLead(req, req.params.id);
     const data = await leadsService.updateLead(req.params.id, { status });
     res.json({ data });
 });
@@ -226,6 +265,7 @@ export const addReport = asyncHandler(async (req, res) => {
     if (!note && !status) {
         throw ApiError.badRequest("A note or status update is required");
     }
+    await assertCanActOnLead(req, req.params.id);
     const data = await leadsService.addReport(
         req.params.id,
         { note, status, next_followup },

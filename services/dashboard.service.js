@@ -54,59 +54,49 @@ export const getAdminDashboard = async () => {
         safeCount("lead_managers"),
     ]);
 
-    const partnerRows = await safeSelect(
-        "partners",
-        "id, name, royalty_percent, status"
-    );
+    // All independent reads run concurrently (one round-trip each, in parallel).
+    // Converted leads are fetched ONCE (with the columns both revenue and royalty
+    // need) instead of twice.
+    const [
+        partnerRows,
+        convertedLeads,
+        hotLeads,
+        pendingReviewList,
+        conversionList,
+        salesCapacity,
+    ] = await Promise.all([
+        safeSelect("partners", "id, name, royalty_percent, status"),
+        safeSelect("leads", "value, royalty_percent, partner_id", (q) =>
+            notTrashed(q).eq("status", LEAD_STATUS.CONVERTED)
+        ),
+        safeSelect("leads", "id, name, value, location, is_vip", (q) =>
+            notTrashed(q)
+                .order("value", { ascending: false, nullsFirst: false })
+                .limit(5)
+        ),
+        safeSelect("leads", "id, name, source, created_at", (q) =>
+            notTrashed(q)
+                .eq("status", LEAD_STATUS.PENDING)
+                .order("created_at", { ascending: false })
+                .limit(10)
+        ),
+        safeSelect("leads", "id, name, assigned_to, status", (q) =>
+            notTrashed(q)
+                .eq("status", LEAD_STATUS.CONVERSION_REQUESTED)
+                .limit(10)
+        ),
+        safeSelect("sales_team", "id, name, capacity, max_lead_capacity"),
+    ]);
 
-    const convertedLeads = await safeSelect("leads", "value", (q) =>
-        notTrashed(q).eq("status", LEAD_STATUS.CONVERTED)
-    );
     const totalRevenue = convertedLeads.reduce(
         (sum, l) => sum + Number(l.value || 0),
         0
     );
 
-    const hotLeads = await safeSelect(
-        "leads",
-        "id, name, value, location, is_vip",
-        (q) =>
-            notTrashed(q)
-                .order("value", { ascending: false, nullsFirst: false })
-                .limit(5)
-    );
-
-    const pendingReviewList = await safeSelect(
-        "leads",
-        "id, name, source, created_at",
-        (q) =>
-            notTrashed(q)
-                .eq("status", LEAD_STATUS.PENDING)
-                .order("created_at", { ascending: false })
-                .limit(10)
-    );
-
-    const conversionList = await safeSelect(
-        "leads",
-        "id, name, assigned_to, status",
-        (q) =>
-            notTrashed(q)
-                .eq("status", LEAD_STATUS.CONVERSION_REQUESTED)
-                .limit(10)
-    );
-
-    const salesCapacity = await safeSelect(
-        "sales_team",
-        "id, name, capacity, max_lead_capacity"
-    );
-
     // Royalty earned = sum over converted leads of value × royalty%
     // (per-deal royalty if set, else the partner's default).
     const partnerById = Object.fromEntries(partnerRows.map((p) => [p.id, p]));
-    const convertedForRoyalty = await safeSelect("leads", "*", (q) =>
-        notTrashed(q).eq("status", LEAD_STATUS.CONVERTED)
-    );
-    const totalRoyalty = convertedForRoyalty.reduce((sum, l) => {
+    const totalRoyalty = convertedLeads.reduce((sum, l) => {
         const pct = l.royalty_percent ?? partnerById[l.partner_id]?.royalty_percent ?? 0;
         return sum + (Number(l.value || 0) * Number(pct)) / 100;
     }, 0);
